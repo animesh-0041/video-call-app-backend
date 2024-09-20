@@ -1,40 +1,51 @@
 const express = require("express");
-const cors = require("cors");
 const http = require("http");
 const socketIo = require("socket.io");
 
 const app = express();
-app.use(
-  cors({
-    origin: "*",
-  })
-);
+
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: "*", // Allow all origins, adjust as needed for security
+    origin: "*",
     methods: ["GET", "POST"],
   },
 });
-
+const rooms = {};
 io.on("connection", (socket) => {
-  console.log("New client connected");
+  console.log("New user connected:", socket.id);
 
-  // Handle signaling data from clients (offer, answer, ICE candidates)
-  socket.on("offer", (data) => {
-    socket.broadcast.emit("offer", data);
-  });
+  // Join a room
+  socket.on("join-room", (roomId) => {
+    if (!rooms[roomId]) rooms[roomId] = [];
+    rooms[roomId].push(socket.id);
+    socket.join(roomId);
+    console.log(`User ${socket.id} joined room ${roomId}`);
 
-  socket.on("answer", (data) => {
-    socket.broadcast.emit("answer", data);
-  });
+    // Notify other users in the room
+    socket.to(roomId).emit("user-connected", socket.id);
 
-  socket.on("ice-candidate", (data) => {
-    socket.broadcast.emit("ice-candidate", data);
-  });
+    // Listen for WebRTC offer
+    socket.on("offer", (offer, receiverId) => {
+      io.to(receiverId).emit("receive-offer", offer, socket.id);
+    });
 
-  socket.on("disconnect", () => {
-    console.log("Client disconnected");
+    // Listen for WebRTC answer
+    socket.on("answer", (answer, senderId) => {
+      io.to(senderId).emit("receive-answer", answer, socket.id);
+    });
+
+    // Listen for ICE candidates
+    socket.on("ice-candidate", (candidate, receiverId) => {
+      io.to(receiverId).emit("ice-candidate", candidate, socket.id);
+    });
+
+    // Handle disconnect
+    socket.on("disconnect", () => {
+      console.log(`User ${socket.id} disconnected`);
+      rooms[roomId] = rooms[roomId].filter((id) => id !== socket.id);
+      socket.to(roomId).emit("user-disconnected", socket.id);
+    });
   });
 });
 
